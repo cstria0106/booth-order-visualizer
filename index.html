@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>주문 데이터 시각화</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+      body {
+        font-family: "Arial", sans-serif;
+        margin: 0;
+        padding: 20px;
+        background-color: #f5f5f5;
+      }
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        background-color: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+      }
+      .chart-container {
+        margin-top: 20px;
+        margin-bottom: 40px;
+      }
+      .charts-row {
+        display: flex;
+        gap: 20px;
+        margin-bottom: 40px;
+      }
+      .chart-half {
+        flex: 1;
+        background-color: #f8f9fa;
+        padding: 15px;
+        border-radius: 5px;
+      }
+      h1 {
+        color: #333;
+        text-align: center;
+        margin-bottom: 30px;
+      }
+      .file-input {
+        width: 100%;
+        padding: 20px;
+        border: 2px dashed #ccc;
+        border-radius: 5px;
+        text-align: center;
+        margin-bottom: 20px;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 20px;
+        margin-bottom: 30px;
+      }
+      .stat-card {
+        background-color: #f8f9fa;
+        padding: 15px;
+        border-radius: 5px;
+        text-align: center;
+      }
+      .stat-card h3 {
+        margin: 0;
+        color: #666;
+        font-size: 14px;
+      }
+      .stat-card p {
+        margin: 10px 0 0 0;
+        font-size: 24px;
+        font-weight: bold;
+        color: #333;
+      }
+      .stat-card .change {
+        font-size: 12px;
+        margin-top: 5px;
+      }
+      .change.positive {
+        color: #28a745;
+      }
+      .change.negative {
+        color: #dc3545;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>주문 데이터 시각화</h1>
+
+      <div class="file-input">
+        <input type="file" id="csvFile" accept=".csv" />
+      </div>
+
+      <div class="stats">
+        <div class="stat-card">
+          <h3>현재 환율</h3>
+          <p id="currentRate">로딩중...</p>
+        </div>
+        <div class="stat-card">
+          <h3>총 주문 수</h3>
+          <p id="totalOrders">0</p>
+        </div>
+        <div class="stat-card">
+          <h3>총 매출</h3>
+          <p id="totalRevenue">0원</p>
+        </div>
+        <div class="stat-card">
+          <h3>일 평균 매출</h3>
+          <p id="dailyAvgRevenue">0원</p>
+        </div>
+        <div class="stat-card">
+          <h3>주 평균 매출</h3>
+          <p id="weeklyAvgRevenue">0원</p>
+        </div>
+        <div class="stat-card">
+          <h3>월 평균 매출</h3>
+          <p id="monthlyAvgRevenue">0원</p>
+        </div>
+      </div>
+
+      <div class="charts-row">
+        <div class="chart-half">
+          <h2>일별 매출</h2>
+          <canvas id="dailyRevenueChart"></canvas>
+        </div>
+        <div class="chart-half">
+          <h2>일별 증감률</h2>
+          <canvas id="dailyChangeChart"></canvas>
+        </div>
+      </div>
+
+      <div class="charts-row">
+        <div class="chart-half">
+          <h2>주별 매출</h2>
+          <canvas id="weeklyRevenueChart"></canvas>
+        </div>
+        <div class="chart-half">
+          <h2>주별 증감률</h2>
+          <canvas id="weeklyChangeChart"></canvas>
+        </div>
+      </div>
+
+      <div class="charts-row">
+        <div class="chart-half">
+          <h2>결제 수단별 비율</h2>
+          <canvas id="paymentMethodChart"></canvas>
+        </div>
+        <div class="chart-half">
+          <h2>상품별 판매 비율</h2>
+          <canvas id="productChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      let dailyRevenueChart,
+        weeklyRevenueChart,
+        dailyChangeChart,
+        weeklyChangeChart,
+        paymentMethodChart,
+        productChart;
+      let currentExchangeRate = 9.5; // 기본값
+
+      // 환율 정보 가져오기
+      async function fetchExchangeRate() {
+        try {
+          const response = await fetch(
+            "https://api.exchangerate-api.com/v4/latest/JPY"
+          );
+          const data = await response.json();
+          currentExchangeRate = data.rates.KRW;
+          document.getElementById(
+            "currentRate"
+          ).textContent = `1엔 = ${currentExchangeRate.toFixed(2)}원`;
+          return currentExchangeRate;
+        } catch (error) {
+          console.error("환율 정보를 가져오는데 실패했습니다:", error);
+          document.getElementById(
+            "currentRate"
+          ).textContent = `1엔 = ${currentExchangeRate.toFixed(2)}원 (기본값)`;
+          return currentExchangeRate;
+        }
+      }
+
+      // 페이지 로드시 환율 정보 가져오기
+      fetchExchangeRate();
+
+      document
+        .getElementById("csvFile")
+        .addEventListener("change", async function (e) {
+          const file = e.target.files[0];
+          const reader = new FileReader();
+
+          // CSV 파일을 읽기 전에 최신 환율 정보를 가져옵니다
+          await fetchExchangeRate();
+
+          reader.onload = function (event) {
+            const csvData = event.target.result;
+            processData(csvData);
+          };
+
+          reader.readAsText(file);
+        });
+
+      function processData(csv) {
+        const lines = csv.split("\n");
+        const headers = parseCSVLine(lines[0]);
+        const data = [];
+
+        // CSV 파싱
+        for (let i = 1; i < lines.length; i++) {
+          if (lines[i].trim() === "") continue;
+
+          const values = parseCSVLine(lines[i]);
+          if (values.length !== headers.length) continue;
+
+          const row = {};
+          headers.forEach((header, index) => {
+            row[header.replace(/"/g, "")] = values[index].replace(/"/g, "");
+          });
+
+          data.push(row);
+        }
+
+        // 날짜별 매출 데이터 생성
+        const dailyRevenue = {};
+        data.forEach((order) => {
+          const date = order["Created At"].split(" ")[0];
+          dailyRevenue[date] =
+            (dailyRevenue[date] || 0) +
+            parseInt(order["Total Price"] || 0) * currentExchangeRate;
+        });
+
+        // 날짜 범위 내 모든 날짜 생성
+        const dates = Object.keys(dailyRevenue).sort();
+        const startDate = new Date(dates[0]);
+        const endDate = new Date(dates[dates.length - 1]);
+        const fullDailyRevenue = {};
+
+        for (
+          let d = new Date(startDate);
+          d <= endDate;
+          d.setDate(d.getDate() + 1)
+        ) {
+          const dateStr = d.toISOString().split("T")[0];
+          fullDailyRevenue[dateStr] = dailyRevenue[dateStr] || 0;
+        }
+
+        // 주별 매출 데이터 생성
+        const weeklyData = {};
+        Object.keys(fullDailyRevenue).forEach((date) => {
+          const [year, week] = getWeekNumber(new Date(date));
+          const key = `${year}-W${week}`;
+          weeklyData[key] = (weeklyData[key] || 0) + fullDailyRevenue[date];
+        });
+
+        // 통계 계산
+        updateStats(data, fullDailyRevenue, weeklyData);
+
+        // 차트 업데이트
+        updateCharts(data, fullDailyRevenue, weeklyData);
+      }
+
+      function parseCSVLine(line) {
+        const result = [];
+        let startIndex = 0;
+        let inQuotes = false;
+
+        for (let i = 0; i < line.length; i++) {
+          if (line[i] === '"') {
+            inQuotes = !inQuotes;
+          } else if (line[i] === "," && !inQuotes) {
+            result.push(line.substring(startIndex, i));
+            startIndex = i + 1;
+          }
+        }
+
+        // 마지막 필드 추가
+        result.push(line.substring(startIndex));
+
+        // 따옴표 제거 및 트림
+        return result.map((field) => field.trim().replace(/^"|"$/g, ""));
+      }
+
+      function updateStats(data, dailyRevenue, weeklyData) {
+        const dates = Object.keys(dailyRevenue).sort();
+        const revenues = dates.map((date) => dailyRevenue[date]);
+
+        // 총 주문 수
+        document.getElementById("totalOrders").textContent = data.length;
+
+        // 총 매출
+        const totalRevenue = revenues.reduce((sum, rev) => sum + rev, 0);
+        document.getElementById("totalRevenue").textContent =
+          Math.round(totalRevenue).toLocaleString() + "원";
+
+        // 일 평균 매출
+        const dailyAvg = totalRevenue / dates.length;
+        document.getElementById("dailyAvgRevenue").textContent =
+          Math.round(dailyAvg).toLocaleString() + "원";
+
+        // 주 평균 매출
+        const weeklyAvg =
+          Object.values(weeklyData).reduce((sum, rev) => sum + rev, 0) /
+          Object.keys(weeklyData).length;
+        document.getElementById("weeklyAvgRevenue").textContent =
+          Math.round(weeklyAvg).toLocaleString() + "원";
+
+        // 월 평균 매출
+        const monthlyData = {};
+        dates.forEach((date) => {
+          const month = date.substring(0, 7); // YYYY-MM
+          monthlyData[month] = (monthlyData[month] || 0) + dailyRevenue[date];
+        });
+        const monthlyAvg =
+          Object.values(monthlyData).reduce((sum, rev) => sum + rev, 0) /
+          Object.keys(monthlyData).length;
+        document.getElementById("monthlyAvgRevenue").textContent =
+          Math.round(monthlyAvg).toLocaleString() + "원";
+      }
+
+      // 날짜로부터 연도와 주차 구하기
+      function getWeekNumber(date) {
+        const d = new Date(date);
+        d.setHours(0, 0, 0, 0);
+        d.setDate(d.getDate() + 4 - (d.getDay() || 7));
+        const yearStart = new Date(d.getFullYear(), 0, 1);
+        const weekNo = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+        return [d.getFullYear(), weekNo];
+      }
+
+      function updateCharts(originalData, dailyRevenue, weeklyData) {
+        // 날짜 필터링 함수
+        function filterLastNDays(data, days) {
+          const dates = Object.keys(data).sort();
+          const lastDate = new Date(dates[dates.length - 1]);
+          const cutoffDate = new Date(lastDate);
+          cutoffDate.setDate(cutoffDate.getDate() - days);
+
+          return Object.fromEntries(
+            Object.entries(data).filter(([date]) => new Date(date) > cutoffDate)
+          );
+        }
+
+        function filterLastNWeeks(data, weeks) {
+          const weekNumbers = Object.keys(data).sort();
+          return Object.fromEntries(Object.entries(data).slice(-weeks));
+        }
+
+        // 최근 60일/12주 데이터 필터링
+        const last60DaysRevenue = filterLastNDays(dailyRevenue, 60);
+        const last12WeeksData = filterLastNWeeks(weeklyData, 12);
+
+        // 공통 차트 옵션
+        const commonChartOptions = {
+          responsive: true,
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: {
+                callback: (value) => value.toLocaleString() + "원",
+              },
+            },
+            x: {
+              ticks: {
+                maxRotation: 45,
+                minRotation: 45,
+              },
+            },
+          },
+          plugins: {
+            title: {
+              display: true,
+              position: "top",
+            },
+          },
+        };
+
+        const commonChangeChartOptions = {
+          responsive: true,
+          scales: {
+            y: {
+              ticks: {
+                callback: (value) => value.toLocaleString() + "원",
+              },
+            },
+            x: {
+              ticks: {
+                maxRotation: 45,
+                minRotation: 45,
+              },
+            },
+          },
+          plugins: {
+            title: {
+              display: true,
+              position: "top",
+            },
+          },
+        };
+
+        // 매출 차트 생성 함수
+        function createRevenueChart(chartId, labels, values, label, color) {
+          const ctx = document.getElementById(chartId);
+          let chart;
+
+          // 차트 ID에 따라 적절한 차트 변수 선택
+          switch (chartId) {
+            case "dailyRevenueChart":
+              if (dailyRevenueChart) dailyRevenueChart.destroy();
+              chart = dailyRevenueChart = new Chart(ctx, {
+                type: "line",
+                data: {
+                  labels: labels.map((date) => {
+                    const d = new Date(date);
+                    return `${d.getMonth() + 1}/${d.getDate()}`;
+                  }),
+                  datasets: [
+                    {
+                      label: label,
+                      data: values,
+                      borderColor: color,
+                      tension: 0.1,
+                    },
+                  ],
+                },
+                options: {
+                  ...commonChartOptions,
+                  plugins: {
+                    ...commonChartOptions.plugins,
+                    title: {
+                      ...commonChartOptions.plugins.title,
+                      text: "최근 60일",
+                    },
+                  },
+                },
+              });
+              break;
+            case "weeklyRevenueChart":
+              if (weeklyRevenueChart) weeklyRevenueChart.destroy();
+              chart = weeklyRevenueChart = new Chart(ctx, {
+                type: "line",
+                data: {
+                  labels: labels,
+                  datasets: [
+                    {
+                      label: label,
+                      data: values,
+                      borderColor: color,
+                      tension: 0.1,
+                    },
+                  ],
+                },
+                options: {
+                  ...commonChartOptions,
+                  plugins: {
+                    ...commonChartOptions.plugins,
+                    title: {
+                      ...commonChartOptions.plugins.title,
+                      text: "최근 12주",
+                    },
+                  },
+                },
+              });
+              break;
+          }
+          return chart;
+        }
+
+        // 증감 차트 생성 함수
+        function createChangeChart(chartId, labels, values, label) {
+          const changes = [];
+          for (let i = 1; i < values.length; i++) {
+            const change = values[i] - values[i - 1];
+            changes.push(change);
+          }
+
+          const ctx = document.getElementById(chartId);
+          let chart;
+
+          // 차트 ID에 따라 적절한 차트 변수 선택
+          switch (chartId) {
+            case "dailyChangeChart":
+              if (dailyChangeChart) dailyChangeChart.destroy();
+              chart = dailyChangeChart = new Chart(ctx, {
+                type: "bar",
+                data: {
+                  labels: labels.slice(1).map((date) => {
+                    const d = new Date(date);
+                    return `${d.getMonth() + 1}/${d.getDate()}`;
+                  }),
+                  datasets: [
+                    {
+                      label: label,
+                      data: changes,
+                      backgroundColor: changes.map((change) =>
+                        change >= 0
+                          ? "rgba(40, 167, 69, 0.5)"
+                          : "rgba(220, 53, 69, 0.5)"
+                      ),
+                      borderColor: changes.map((change) =>
+                        change >= 0 ? "rgb(40, 167, 69)" : "rgb(220, 53, 69)"
+                      ),
+                      borderWidth: 1,
+                    },
+                  ],
+                },
+                options: {
+                  ...commonChangeChartOptions,
+                  plugins: {
+                    ...commonChangeChartOptions.plugins,
+                    title: {
+                      ...commonChangeChartOptions.plugins.title,
+                      text: "최근 60일",
+                    },
+                  },
+                },
+              });
+              break;
+            case "weeklyChangeChart":
+              if (weeklyChangeChart) weeklyChangeChart.destroy();
+              chart = weeklyChangeChart = new Chart(ctx, {
+                type: "bar",
+                data: {
+                  labels: labels.slice(1),
+                  datasets: [
+                    {
+                      label: label,
+                      data: changes,
+                      backgroundColor: changes.map((change) =>
+                        change >= 0
+                          ? "rgba(40, 167, 69, 0.5)"
+                          : "rgba(220, 53, 69, 0.5)"
+                      ),
+                      borderColor: changes.map((change) =>
+                        change >= 0 ? "rgb(40, 167, 69)" : "rgb(220, 53, 69)"
+                      ),
+                      borderWidth: 1,
+                    },
+                  ],
+                },
+                options: {
+                  ...commonChangeChartOptions,
+                  plugins: {
+                    ...commonChangeChartOptions.plugins,
+                    title: {
+                      ...commonChangeChartOptions.plugins.title,
+                      text: "최근 12주",
+                    },
+                  },
+                },
+              });
+              break;
+          }
+          return chart;
+        }
+
+        // 차트 생성
+        createRevenueChart(
+          "dailyRevenueChart",
+          Object.keys(last60DaysRevenue).sort(),
+          Object.values(last60DaysRevenue).map((v) => Math.round(v)),
+          "일별 매출 (원)",
+          "rgb(75, 192, 192)"
+        );
+        createChangeChart(
+          "dailyChangeChart",
+          Object.keys(last60DaysRevenue).sort(),
+          Object.values(last60DaysRevenue).map((v) => Math.round(v)),
+          "전일 대비 증감 (원)"
+        );
+        createRevenueChart(
+          "weeklyRevenueChart",
+          Object.keys(last12WeeksData).sort(),
+          Object.values(last12WeeksData).map((v) => Math.round(v)),
+          "주별 매출 (원)",
+          "rgb(54, 162, 235)"
+        );
+        createChangeChart(
+          "weeklyChangeChart",
+          Object.keys(last12WeeksData).sort(),
+          Object.values(last12WeeksData).map((v) => Math.round(v)),
+          "전주 대비 증감 (원)"
+        );
+
+        // 결제 수단별 차트
+        const paymentMethods = {};
+        originalData.forEach((order) => {
+          const method = order["신용카드"];
+          paymentMethods[method] = (paymentMethods[method] || 0) + 1;
+        });
+
+        if (paymentMethodChart) paymentMethodChart.destroy();
+        paymentMethodChart = new Chart(
+          document.getElementById("paymentMethodChart"),
+          {
+            type: "bar",
+            data: {
+              labels: Object.keys(paymentMethods),
+              datasets: [
+                {
+                  data: Object.values(paymentMethods),
+                  backgroundColor: [
+                    "rgb(255, 99, 132)",
+                    "rgb(54, 162, 235)",
+                    "rgb(255, 205, 86)",
+                    "rgb(75, 192, 192)",
+                  ],
+                },
+              ],
+            },
+            options: {
+              indexAxis: "y",
+              plugins: {
+                legend: {
+                  display: false,
+                },
+              },
+            },
+          }
+        );
+
+        // 상품별 판매 차트
+        const products = {};
+        originalData.forEach((order) => {
+          const items = order["Item ID / Quantity / Name"].split("\n");
+          items.forEach((item) => {
+            const match = item.match(/Item ID : \d+ \/ Quantity : \d+ \/ (.+)/);
+            if (match) {
+              const productName = match[1];
+              products[productName] = (products[productName] || 0) + 1;
+            }
+          });
+        });
+
+        if (productChart) productChart.destroy();
+        productChart = new Chart(document.getElementById("productChart"), {
+          type: "bar",
+          data: {
+            labels: Object.keys(products),
+            datasets: [
+              {
+                data: Object.values(products),
+                backgroundColor: [
+                  "rgb(255, 99, 132)",
+                  "rgb(54, 162, 235)",
+                  "rgb(255, 205, 86)",
+                ],
+              },
+            ],
+          },
+          options: {
+            indexAxis: "y",
+            plugins: {
+              legend: {
+                display: false,
+              },
+            },
+          },
+        });
+      }
+    </script>
+  </body>
+</html>
